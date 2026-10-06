@@ -1,0 +1,8 @@
+customtkinter
+tk
+Pillow
+torch
+torchvision
+matplotlib
+numpy
+pyinstaller
