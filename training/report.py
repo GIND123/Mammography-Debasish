@@ -37,6 +37,8 @@ PRETTY = {
     "v2s_ext": "EffNetV2-S + ext",
     "cnx_ext": "ConvNeXt-T + ext",
     "inc_monai_ext": "InceptionV3 (MONAI density init) + ext",
+    "b0_ext+inc_monai_ext": "Ensemble: EffNet-B0 + MONAI-InceptionV3 (deployed)",
+    "b0_ext+b0_rsna+v2s_ext+cnx_ext+inc_monai_ext+b0_ext_hr+b0_ext_dw6": "Ensemble: all 7 external-data models",
 }
 
 
@@ -187,27 +189,29 @@ def fig_guardrails(raw, name, out):
         "in_dmid_unseen_site": "Mammograms: DMID (unseen Indian site)", "ood_chest_xray": "Chest X-ray",
         "ood_natural_photo": "Natural photographs", "ood_skin_dermoscopy": "Skin dermoscopy",
         "ood_breast_ultrasound": "Breast ultrasound", "ood_brain_mri": "Brain MRI", "ood_synthetic": "Synthetic junk",
+        "ood_lung_ct": "Lung CT (modality never seen by the gate)",
     }
     df["label"] = df.set.map(labels).fillna(df.set)
     df["is_in"] = df.set.str.startswith("in_")
     df = pd.concat([df[df.is_in], df[~df.is_in]])
-    fig, ax = plt.subplots(figsize=(7.4, 0.42 * len(df) + 1.3))
+    fig, ax = plt.subplots(figsize=(8.6, 0.42 * len(df) + 1.9))
     y = np.arange(len(df))[::-1]
     cols = [SERIES[2] if i else SERIES[1] for i in df.is_in]
     ax.barh(y, df.rejected, color=cols, height=0.6)
     for yi, v, n in zip(y, df.rejected, df.n):
-        ax.text(min(v + 0.01, 0.9), yi, f"{v:.0%}  (n={n})", va="center", fontsize=9, color=INK2)
+        ax.text(v + 0.015, yi, f"{v:.0%}  (n={n})", va="center", fontsize=9, color=INK2)
     ax.set_yticks(y, df.label)
-    ax.set_xlim(0, 1.15)
-    ax.set_xlabel("Fraction rejected by guardrails")
+    ax.set_xlim(0, 1.3)
+    ax.set_xticks([0, 0.25, 0.5, 0.75, 1.0])
+    ax.set_xlabel("Fraction of inputs rejected by the guardrails")
     ax.grid(axis="y", visible=False)
-    ax.set_title("Input guardrails: genuine mammograms should pass, everything else should be rejected")
     from matplotlib.patches import Patch
 
-    ax.legend(handles=[Patch(color=SERIES[2], label="Genuine mammograms (lower is better)"),
-                       Patch(color=SERIES[1], label="Not a mammogram (higher is better)")],
-              loc="lower right", fontsize=8.5)
-    fig.tight_layout()
+    fig.legend(handles=[Patch(color=SERIES[2], label="Genuine mammograms (lower is better)"),
+                        Patch(color=SERIES[1], label="Not a mammogram (higher is better)")],
+               loc="upper left", bbox_to_anchor=(0.01, 0.95), ncol=2, fontsize=8.5)
+    fig.suptitle("Input guardrails on held-out probe sets", x=0.01, ha="left", fontsize=11, fontweight="bold")
+    fig.tight_layout(rect=(0, 0, 1, 0.9))
     fig.savefig(os.path.join(out, "fig_guardrails.png"), dpi=200)
     plt.close(fig)
     return g
@@ -239,7 +243,7 @@ def fig_external(df, out):
     d = df.dropna(subset=["local_qwk"])
     if d.empty:
         return
-    fig, ax = plt.subplots(figsize=(8.6, 0.48 * len(d) + 1.5))
+    fig, ax = plt.subplots(figsize=(9.6, 0.5 * len(d) + 1.9))
     y = np.arange(len(d))[::-1]
     for (col, lab), c, dy in zip((("local_qwk", "Local hospital (5-fold CV)"), ("rsna_qwk", "RSNA test patients"),
                                   ("cbis_qwk", "CBIS-DDSM test (scanned film)")), SERIES[:3], (0.18, 0, -0.18)):
@@ -248,9 +252,11 @@ def fig_external(df, out):
     ax.set_xlim(0, 1)
     ax.set_xlabel("Quadratic weighted kappa (density A-D)")
     ax.grid(axis="y", visible=False)
-    ax.set_title("Generalisation: models trained with external data hold up on unseen sites")
-    ax.legend(loc="lower left", fontsize=8.5, ncol=3, bbox_to_anchor=(0, -0.02 - 0.9 / len(d)))
-    fig.tight_layout()
+    fig.suptitle("Generalisation to unseen sites: external training data is what makes the model portable",
+                 x=0.01, ha="left", fontsize=11, fontweight="bold")
+    h, lab = ax.get_legend_handles_labels()
+    fig.legend(h, lab, loc="upper left", bbox_to_anchor=(0.01, 0.95), ncol=3, fontsize=8.5, handletextpad=0.3)
+    fig.tight_layout(rect=(0, 0, 1, 0.9))
     fig.savefig(os.path.join(out, "fig_external_generalisation.png"), dpi=200)
     plt.close(fig)
 
@@ -292,6 +298,23 @@ def write_model_card_results(card_path, best_summary, best_name, ext_df, guard, 
         sd = guard.get("suspicion_decision") or {}
         lines += ["", f"Suspicion score shown in the tool: **{'yes' if sd.get('enabled') else 'no'}** "
                       f"(pre-registered criteria {sd.get('criteria')}; observed {sd.get('observed')}).", ""]
+    gp = os.path.join(os.path.dirname(os.path.dirname(card_path)) or ".", "reports", "raw", "gate", "gate_study.json")
+    if os.path.exists(gp):
+        gs = json.load(open(gp))
+        lines += ["### Mammogram gate (supervised 'is this a standard mammogram?' check)", "",
+                  f"Threshold set so that {gs['pos_val_pass_rate']:.1%} of held-out genuine mammograms pass.", "",
+                  "Leave-one-modality-out (gate retrained without that modality, then tested on it):", "",
+                  "| Withheld modality | n | Rejected |", "|---|---|---|"]
+        for t, v in gs.get("leave_one_modality_out", {}).items():
+            lines.append(f"| {t} | {v['n']} | {v['rejected_when_unseen']:.1%} |")
+        emb = gs.get("embedding_ood_auroc", {})
+        if emb:
+            lines += ["", "For comparison, embedding-distance OOD (density model features) separates these modalities "
+                      "from RSNA/CBIS test mammograms (Mahalanobis AUROC "
+                      f"{min(v['auroc_mahalanobis'] for v in emb.values()):.2f}-{max(v['auroc_mahalanobis'] for v in emb.values()):.2f}), "
+                      "but not from the local hospital mammograms, which lie as far from the training distribution as "
+                      "chest X-rays do; the deployed tool therefore relies on the supervised gate."]
+        lines.append("")
     if dmid:
         lines += ["### Unseen Indian site (DMID, single views, no training)", "",
                   f"Spearman correlation between predicted density score and tissue type F<G<D: "

@@ -410,11 +410,12 @@ def eval_dmid(name: str):
             continue
         g = load_grayscale(files[r.img])
         crop, info = preprocess(g)
-        x = torch.from_numpy(to_canvas(crop, pred.h, pred.w))[None, None].cuda()
         head = "density_mlo" if r.view.startswith("MLO") else "density_cc"
         ps, ms = [], []
         for m in pred.members:
-            o = m["net"](x, x)
+            x = torch.from_numpy(to_canvas(crop, *m["hw"]))[None, None].cuda()
+            with torch.no_grad():
+                o = m["net"](x, x)
             ps.append(softmax(o[head].float().cpu().numpy()[0] / m["t_dens"]))
             mh = "malignant_mlo" if r.view.startswith("MLO") else "malignant_cc"
             ms.append(float(sigmoid(o[mh].float().cpu().numpy()[0] / m["t_mal"])))
@@ -428,8 +429,9 @@ def eval_dmid(name: str):
     res = dict(n=len(df), tissue_counts=df.tissue.value_counts().to_dict(),
                spearman_score_vs_tissue=float(spearmanr(df.score, t).correlation),
                mean_p_dense_by_tissue=df.groupby("tissue").p_dense.mean().round(3).to_dict(),
-               pred_class_by_tissue=df.assign(pred=df[[f"p_{c}" for c in "ABCD"]].values.argmax(1))
-                   .groupby(["tissue", "pred"]).size().rename(lambda x: str(x)).to_dict())
+               pred_class_by_tissue={f"{t}->{'ABCD'[k]}": int(v) for (t, k), v in
+                                     df.assign(pred=df[[f"p_{c}" for c in "ABCD"]].values.argmax(1))
+                                     .groupby(["tissue", "pred"]).size().items()})
     fd = df[df.tissue.isin(["F", "D"])]
     if fd.tissue.nunique() == 2:
         res["auc_dense_F_vs_D"] = float(roc_auc_score(fd.tissue == "D", fd.score))
@@ -628,8 +630,8 @@ def gate_study(loto: bool = True, embed_run: str = "b0_ext"):
 
     from training import gate as GT
 
-    m, thr, res = GT.run_study("/data", "cuda", loto=loto)
     os.makedirs("/runs/gate", exist_ok=True)
+    m, thr, res = GT.run_study("/data", "cuda", loto=loto, progress_path="/runs/gate/loto_progress.json")
     torch.save(dict(arch="efficientnet_b0", hw=GT.GATE_HW, threshold=thr,
                     state_dict={k: v.half() for k, v in m.state_dict().items()}), "/runs/gate/gate.pt")
 
@@ -698,3 +700,16 @@ def resummarize(names: str):
         lc = s.get("local_cv", {})
         print(n, {k: round(lc.get(k, float("nan")), 3) for k in ("accuracy", "qwk", "macro_f1", "ece")},
               "cal:", s.get("calibration"), "consistent:", lc.get("consistent_label_subset"))
+
+
+@app.local_entrypoint()
+def combos(sets: str):
+    """sets: ';'-separated list of comma-separated run names."""
+    groups = [s.split(",") for s in sets.split(";")]
+    for g, s in zip(groups, summarize_combo.map(groups)):
+        lc = s["local_cv"]
+        ext = {ev: (round(s.get(ev, {}).get("density", {}).get("qwk", float("nan")), 3),
+                    round(s.get(ev, {}).get("malignant", {}).get("auc", float("nan")), 3)) for ev in ("rsna_test", "cbis_test")}
+        print("+".join(g), {k: round(lc[k], 3) for k in ("accuracy", "balanced_accuracy", "macro_f1", "qwk", "ece")},
+              "ci_qwk", [round(x, 3) for x in lc["ci95"]["qwk"]], "ext(qwk,malAUC)", ext,
+              "birads_auc", round(s.get("birads_ext", {}).get("malignant", {}).get("auc", float("nan")), 3))

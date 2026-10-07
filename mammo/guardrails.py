@@ -20,7 +20,7 @@ import numpy as np
 from PIL import Image
 
 ALLOWED_EXT = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".dcm", ".dicom")
-MAX_FILE_BYTES = 80 * 1024 * 1024
+MAX_FILE_BYTES = 250 * 1024 * 1024  # uncompressed 16-bit TIFF/DICOM mammograms can be large
 MIN_FILE_BYTES = 2 * 1024
 MIN_SIDE_BLOCK = 256  # below this, parenchymal texture is not resolvable
 MIN_SIDE_WARN = 1000  # the local training data is ~2400x2850

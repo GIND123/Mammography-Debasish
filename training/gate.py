@@ -8,6 +8,7 @@ leave-one-modality-out and on modalities never seen in training.
 from __future__ import annotations
 
 import glob
+import json
 import os
 import random
 from concurrent.futures import ProcessPoolExecutor
@@ -110,7 +111,7 @@ def score(m, arrays, device="cuda"):
     return np.concatenate(out)
 
 
-def run_study(data_root="/data", device="cuda", loto=True):
+def run_study(data_root="/data", device="cuda", loto=True, progress_path=None):
     images = pd.read_parquet(os.path.join(data_root, "manifest", "images.parquet"))
     images = images[images.exclude_reason.isna()]
     cache = os.path.join(data_root, "cache")
@@ -126,7 +127,9 @@ def run_study(data_root="/data", device="cuda", loto=True):
            for t in neg_types}
     probes = {}
     for d in sorted(glob.glob(os.path.join(data_root, "ood", "*"))):
-        probes["ood_" + os.path.basename(d)] = crops_for(sorted(glob.glob(d + "/*"))[:200])
+        files = sorted(glob.glob(d + "/*"))[:200]
+        if files:  # some probe sources failed to download (empty folders)
+            probes["ood_" + os.path.basename(d)] = crops_for(files)
     for src, split in (("rsna_subset", "test"), ("cbis", "test")):
         rows = images[(images.source == src) & (images.split == split)].sample(200, random_state=0)
         probes[f"in_{src}_{split}"] = {u: (cached_canvas(u, cache), True) for u in rows.uid}
@@ -148,6 +151,10 @@ def run_study(data_root="/data", device="cuda", loto=True):
             thr, _ = threshold_for(m)
             arr = [c for c, _ in probes[f"ood_{t}"].values()]
             loto_res[t] = dict(n=len(arr), rejected_when_unseen=float((score(m, arr, device) < thr).mean()), threshold=thr)
+            print("LOTO", t, loto_res[t], flush=True)
+            if progress_path:
+                with open(progress_path, "w") as f:
+                    json.dump(loto_res, f, indent=1)
             del m
             torch.cuda.empty_cache()
         res["leave_one_modality_out"] = loto_res
@@ -156,7 +163,9 @@ def run_study(data_root="/data", device="cuda", loto=True):
     final = {}
     for name, d in probes.items():
         arr = [c for c, _ in d.values()]
-        valid = np.array([v for _, v in d.values()])
+        if not arr:
+            continue
+        valid = np.array([bool(v) for _, v in d.values()], dtype=bool)
         s = score(m, arr, device)
         final[name] = dict(n=len(arr), gate_rejected=float((s < thr).mean()),
                            gate_or_heuristic_rejected=float(((s < thr) | ~valid).mean()), median_p=float(np.median(s)))

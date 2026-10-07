@@ -41,6 +41,9 @@ def assemble(run_dir: str | list, suspicion: dict | None = None, ood_thresholds:
         ))
     sp = os.path.join(run_dirs[0], "summary.json")
     summary = json.load(open(sp)) if len(run_dirs) == 1 and os.path.exists(sp) else {}
+    if ood_thresholds is None:  # embedding OOD unused: drop the large covariance matrices
+        for m in members:
+            m["ood"] = {"mean": None, "precision": None, "train_dist_quantiles": m["ood"]["train_dist_quantiles"]}
     return {
         "format": "dicemed-bundle-v2", "version": f"{__version__}+{'+'.join(os.path.basename(r) for r in run_dirs)}",
         "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),

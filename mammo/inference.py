@@ -81,8 +81,11 @@ class MammoPredictor:
             net.to(self.device).eval()
             self.members.append(dict(net=net, hw=tuple(m.get("input_hw", b["input_hw"])),
                                      t_dens=m["temperature"]["density"], t_mal=m["temperature"]["malignant"],
-                                     ood_mean=torch.tensor(m["ood"]["mean"]), ood_prec=torch.tensor(m["ood"]["precision"]),
-                                     ood_q=m["ood"]["train_dist_quantiles"]))
+                                     ood_mean=torch.tensor(m["ood"]["mean"])
+                                     if (m.get("ood") or {}).get("mean") is not None else None,
+                                     ood_prec=torch.tensor(m["ood"]["precision"]).float()
+                                     if (m.get("ood") or {}).get("precision") is not None else None,
+                                     ood_q=(m.get("ood") or {}).get("train_dist_quantiles")))
         ot = b.get("ood_thresholds")  # None: embedding-distance OOD not used (it did not separate modalities)
         self.ood_warn, self.ood_block = (ot["warn"], ot["block"]) if ot else (None, None)
         self.gate = None
@@ -145,6 +148,8 @@ class MammoPredictor:
         return float(torch.sigmoid(self.gate["net"]((x - mean) / std)).item())
 
     def _ood_score(self, emb, m):
+        if m["ood_prec"] is None:  # slim bundles omit embedding statistics (the gate is used instead)
+            return float("nan")
         d = emb - m["ood_mean"]
         dist = torch.sqrt(torch.clamp((d @ m["ood_prec"] * d).sum(-1), min=0)).item()
         return dist / m["ood_q"][0.99] if 0.99 in m["ood_q"] else dist / m["ood_q"]["0.99"]
@@ -179,8 +184,12 @@ class MammoPredictor:
             xs = self._tensors(cc, mlo)
             outs = self._forward(xs)
 
-        s_cc = float(np.mean([self._ood_score(o["emb_cc"][0], m) for o, m in zip(outs, self.members)]))
-        s_mlo = float(np.mean([self._ood_score(o["emb_mlo"][0], m) for o, m in zip(outs, self.members)]))
+        def _mean(xs):
+            xs = [x for x in xs if not np.isnan(x)]
+            return float(np.mean(xs)) if xs else float("nan")
+
+        s_cc = _mean([self._ood_score(o["emb_cc"][0], m) for o, m in zip(outs, self.members)])
+        s_mlo = _mean([self._ood_score(o["emb_mlo"][0], m) for o, m in zip(outs, self.members)])
         if self.ood_warn is not None:
             G.check_ood(s_cc, s_mlo, self.ood_warn, self.ood_block, report)
         if report.blocked:

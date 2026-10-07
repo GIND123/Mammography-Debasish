@@ -195,3 +195,14 @@ def test_gate_blocks_when_score_below_threshold(tmp_path, bundle_path):
     r = MammoPredictor(str(p), device="cpu").predict(SAMPLE_CC, SAMPLE_MLO)
     assert r.status == "blocked" and "not_mammogram" in codes(r)
     assert set(r.view_check["gate"]) == {"CC", "MLO"}
+
+
+def test_slim_bundle_without_embedding_stats(tmp_path, bundle_path):
+    b = torch.load(bundle_path, weights_only=False)
+    b["ood_thresholds"] = None
+    for m in b["members"]:
+        m["ood"] = {"mean": None, "precision": None, "train_dist_quantiles": {0.99: 1.0}}
+    p = tmp_path / "slim.pt"
+    torch.save(b, p)
+    r = MammoPredictor(str(p), device="cpu").predict(SAMPLE_CC, SAMPLE_MLO, explain=False)
+    assert r.status == "ok" and np.isnan(r.ood["CC"])

@@ -22,6 +22,36 @@ DiceMed estimates the **ACR BI-RADS breast-density category (A–D)** from the c
 Re-running the v1 recipe under the v2 protocol gives the honest baseline that the paper
 should compare against (see `reports/`).
 
+## Results (summary — full tables in [MODEL_CARD.md](MODEL_CARD.md), figures in `reports/figures/`)
+
+Local hospital data, patient-level 5-fold cross-validation (416 breast exams, 171 patients), 95% CI by
+patient bootstrap:
+
+| Model | Accuracy | Macro F1 | QWK | Dense vs non-dense AUC |
+|---|---|---|---|---|
+| v1 notebook recipe, re-evaluated without patient leakage | 0.686 | 0.642 | 0.708 [0.63–0.77] | 0.883 |
+| **v2 deployed ensemble (EffNet-B0 + MONAI-InceptionV3, external data)** | **0.750** | **0.743** | **0.786 [0.72–0.84]** | **0.924** |
+
+* Locked external tests (unseen patients/sites): RSNA QWK 0.763, CBIS-DDSM QWK 0.765. A model trained on
+  the local data alone reaches similar local CV but collapses externally (RSNA QWK 0.34) — the external
+  training data is what makes the tool portable.
+* 98.3% of predictions are within one density category; calibration error (ECE) 0.048.
+* Guardrails reject 100% of chest X-rays, breast ultrasound, lung CT (never seen in training), brain MRI,
+  photographs and synthetic junk, while passing 96–99% of genuine mammograms from other sites.
+* Unseen Indian site (DMID, never used for training, single views): fatty vs dense-glandular AUC 0.99;
+  mean P(dense) rises from 0.05 (fatty) to 0.28 (fatty-glandular) to 0.70 (dense-glandular).
+* The experimental suspicion (benign/malignant) head did **not** meet its pre-registered validation
+  criteria (RSNA AUC 0.698 < 0.70) and is therefore not shown in the tool.
+
+## Getting the model bundle
+
+`models/dicemed_density_v2.pt` (~320 MB) is not stored in git. Fetch it from the Modal volume:
+
+```bash
+modal volume get dicemed-runs "b0_ext+inc_monai_ext/bundle/dicemed_density_v2.pt" models/dicemed_density_v2.pt
+python scripts/slim_bundle.py models/dicemed_density_v2.pt models/dicemed_density_v2.pt   # drop unused OOD stats
+```
+
 ## Repository layout
 
 ```
