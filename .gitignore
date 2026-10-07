@@ -22,3 +22,23 @@ env/
 
 .DS_Store
 Thumbs.db
+
+# secrets
+.env
+.env.*
+
+# training artefacts (pulled from Modal; large / regenerable)
+reports/raw/
+runs/
+*.parquet
+.pytest_cache/
+
+# patient data must never be committed
+# - ACR.ipynb: saved outputs embed patient mammograms
+# - drive_manifest.json: direct links to the shared patient folder (incl. report files with names)
+# - Grad-CAM example figure renders patient images
+ACR.ipynb
+training/drive_manifest.json
+reports/figures/fig_gradcam_examples.png
+# model bundles are large; distribute separately (see README)
+models/*.pt
