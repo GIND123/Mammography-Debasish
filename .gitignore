@@ -40,5 +40,3 @@ runs/
 ACR.ipynb
 training/drive_manifest.json
 reports/figures/fig_gradcam_examples.png
-# model bundles are large; distribute separately (see README)
-models/*.pt

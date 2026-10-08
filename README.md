@@ -45,12 +45,8 @@ patient bootstrap:
 
 ## Getting the model bundle
 
-`models/dicemed_density_v2.pt` (~320 MB) is not stored in git. Fetch it from the Modal volume:
-
-```bash
-modal volume get dicemed-runs "b0_ext+inc_monai_ext/bundle/dicemed_density_v2.pt" models/dicemed_density_v2.pt
-python scripts/slim_bundle.py models/dicemed_density_v2.pt models/dicemed_density_v2.pt   # drop unused OOD stats
-```
+`models/dicemed_density_v2.pt` (~320 MB) is stored with Git LFS. Install Git LFS before cloning
+(`git lfs install`), or run `git lfs pull` after cloning; then `python Interface.py` works directly.
 
 ## Repository layout
 
