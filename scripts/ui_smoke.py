@@ -14,7 +14,7 @@ from PIL import ImageGrab  # noqa: E402
 import Interface  # noqa: E402
 
 app = Interface.MammographyTool()
-while app.predictor is None and app.predictor_error is None:
+while "fast" not in app.predictors and app.predictor_error is None:
     app.update()
     time.sleep(0.05)
 assert app.predictor_error is None, app.predictor_error

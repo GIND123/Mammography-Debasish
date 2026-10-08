@@ -42,20 +42,26 @@ class MammographyTool(ctk.CTk):
         self.resizable(False, False)
         self.bg_image_path = resource_path("Background.png")
         self.colour_image_path = resource_path("bgcolour.png")
-        self.predictor = None  # mammo.inference.MammoPredictor once loaded
+        self.predictors = {}  # mode -> mammo.inference.MammoPredictor, loaded in the background
         self.predictor_error: str | None = None
+        self.accurate_mode = ctk.BooleanVar(value=os.environ.get("DICEMED_MODE") == "accurate")
         self.last_result = None
-        threading.Thread(target=self._load_predictor, daemon=True).start()  # warm up while user uploads
+        threading.Thread(target=self._load_predictor, args=("fast",), daemon=True).start()  # warm up while user uploads
         self.show_home()
 
     # ------------------------------------------------------------------ model
-    def _load_predictor(self):
+    @property
+    def predictor(self):
+        return self.predictors.get("fast")
+
+    def _load_predictor(self, mode):
+        """Fast mode: 2 networks (validated pairing). Accurate mode: all 10 fold networks.
+        Uses a CUDA GPU automatically when PyTorch can see one."""
         try:
             from mammo.inference import MammoPredictor
 
             bundle = os.environ.get("DICEMED_BUNDLE") or resource_path(os.path.join("models", "dicemed_density_v2.pt"))
-            self.predictor = MammoPredictor(bundle,
-                                            device="cpu")
+            self.predictors[mode] = MammoPredictor(bundle, device=None, mode=mode)
         except Exception as e:  # surfaced to the user when they press Predict
             self.predictor_error = f"{type(e).__name__}: {e}"
 
@@ -91,6 +97,8 @@ class MammographyTool(ctk.CTk):
         self.predict_btn = ctk.CTkButton(self, text="Predict", width=200, height=50, fg_color="#16a34a",
                                          text_color="white", command=self.predict, state="disabled")
         self.predict_btn.place(relx=0.5, rely=0.93, anchor="center")
+        ctk.CTkSwitch(self, text="High-accuracy mode (10 models, slower)", variable=self.accurate_mode,
+                      text_color="white", bg_color=self.BG_COLOR).place(x=15, rely=0.93, anchor="w")
 
     def upload(self, view):
         path = filedialog.askopenfilename(title=f"Select {view} image", filetypes=FILETYPES)
@@ -113,20 +121,22 @@ class MammographyTool(ctk.CTk):
 
     def predict(self):
         self.predict_btn.configure(state="disabled")
-        self.status.configure(text="Analysing... (first run loads the model, this can take a few seconds)")
+        self.status.configure(text="Analysing...")
         threading.Thread(target=self._predict_worker, args=(dict(self.paths),), daemon=True).start()
 
     def _predict_worker(self, paths):
         import time
 
-        while self.predictor is None and self.predictor_error is None:
+        mode = "accurate" if self.accurate_mode.get() else "fast"
+        if mode not in self.predictors and mode != "fast":
+            self._load_predictor(mode)
+        while mode not in self.predictors and self.predictor_error is None:
             time.sleep(0.1)
         if self.predictor_error:
             self.after(0, lambda: self._error(self.predictor_error))
             return
         try:
-            assert self.predictor is not None
-            result = self.predictor.predict(paths["CC"], paths["MLO"], explain=True)
+            result = self.predictors[mode].predict(paths["CC"], paths["MLO"], explain=True)
         except Exception as e:
             self.after(0, lambda: self._error(f"{type(e).__name__}: {e}"))
             return

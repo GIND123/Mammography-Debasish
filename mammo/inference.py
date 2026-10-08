@@ -21,6 +21,7 @@ from .metrics import sigmoid, softmax
 from .model import DualViewNet
 from .preprocess import _read_dicom, load_grayscale, preprocess, to_canvas
 
+MAX_WORK_SIDE = 2048
 DEFAULT_BUNDLE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models",
                               "dicemed_density_v2.pt")
 
@@ -62,23 +63,35 @@ class PredictionResult:
 
 
 class MammoPredictor:
-    def __init__(self, bundle_path: str = DEFAULT_BUNDLE, device: str | None = None, max_members: int | None = None,
-                 cam_members: int = 2):
+    def __init__(self, bundle_path: str = DEFAULT_BUNDLE, device: str | None = None, mode: str = "fast",
+                 max_members: int | None = None, cam_members: int = 1):
+        """mode="fast": one fold model per architecture (the pairing whose out-of-fold accuracy was
+        measured in cross-validation); mode="accurate": every fold model in the bundle."""
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
-        b = torch.load(bundle_path, map_location="cpu", weights_only=False)
+        self.half = self.device.type == "cuda"
+        b = torch.load(bundle_path, map_location="cpu", weights_only=False, mmap=True)
         if b.get("format") != "dicemed-bundle-v2":
             raise ValueError(f"{bundle_path} is not a DiceMed v2 model bundle")
         self.bundle = b
+        self.mode = mode
         self.version = b.get("version", "?")
         self.h, self.w = b["input_hw"]
         self.classes = b.get("classes", DENSITY_CLASSES)
+        members = b["members"]
+        if mode == "fast":
+            fold = b.get("fast_fold", 3)  # chosen on external validation data, not on any test set
+            runs = list(dict.fromkeys(m.get("run", "") for m in members))
+            members = [next((m for m in members if m.get("run", "") == r and m["fold"] == fold),
+                            next(m for m in members if m.get("run", "") == r)) for r in runs]
         self.members = []
-        for m in b["members"][: max_members or None]:
+        for m in members[: max_members or None]:
             # Members may differ in architecture / input size (heterogeneous ensembles).
             cfg = m.get("model_cfg", b["model_cfg"])
             net = DualViewNet(pretrained=False, **{k: v for k, v in cfg.items() if k != "weights_path"})
             net.load_state_dict({k: v.float() for k, v in m["state_dict"].items()})
             net.to(self.device).eval()
+            if self.device.type == "cpu":
+                net = net.to(memory_format=torch.channels_last)
             self.members.append(dict(net=net, hw=tuple(m.get("input_hw", b["input_hw"])),
                                      t_dens=m["temperature"]["density"], t_mal=m["temperature"]["malignant"],
                                      ood_mean=torch.tensor(m["ood"]["mean"])
@@ -118,6 +131,11 @@ class MammoPredictor:
         G.check_image(im, gray, view, report)
         if any(f.severity == "block" and f.view == view for f in report.findings):
             return None
+        if max(gray.shape) > MAX_WORK_SIDE:  # the model sees <=1024 px crops; full detector size only costs time
+            import cv2
+
+            s = MAX_WORK_SIDE / max(gray.shape)
+            gray = cv2.resize(gray, (round(gray.shape[1] * s), round(gray.shape[0] * s)), interpolation=cv2.INTER_AREA)
         crop, info = preprocess(gray)
         G.check_preprocess(info, view, report)
         return dict(bytes=data, gray=gray, crop=crop, info=info)
@@ -133,7 +151,8 @@ class MammoPredictor:
     def _forward(self, xs):
         outs = []
         for m in self.members:
-            o = m["net"](*xs[m["hw"]])
+            with torch.autocast("cuda", dtype=torch.float16, enabled=self.half):
+                o = m["net"](*xs[m["hw"]])
             outs.append({k: v.float().cpu() for k, v in o.items()})
         return outs
 

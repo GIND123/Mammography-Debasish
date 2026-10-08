@@ -3,6 +3,8 @@ customtkinter>=5.2
 pillow>=10
 numpy>=1.26
 opencv-python-headless>=4.8
+# GPU (NVIDIA): install the CUDA build first, e.g.
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
 torch>=2.2
 torchvision>=0.17
 timm>=1.0.15

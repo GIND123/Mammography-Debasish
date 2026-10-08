@@ -89,6 +89,17 @@ r = pred.predict("cc.png", "mlo.png")
 r.status, r.density, r.probabilities, r.dense_probability, r.findings
 ```
 
+**Speed.** The tool runs in *fast* mode by default: one EfficientNet-B0 and one MONAI-InceptionV3
+from the same cross-validation fold (exactly the pairing whose out-of-fold accuracy is reported above).
+*High-accuracy* mode (switch on the upload page, `--mode accurate`, or `DICEMED_MODE=accurate`)
+averages all 10 fold models. A CUDA GPU is used automatically when PyTorch can see one
+(`python Prototype1.py` installs the CUDA build when an NVIDIA GPU is present).
+
+| Per case, incl. heatmaps | Fast | Accurate |
+|---|---|---|
+| GPU (RTX 3070 Ti laptop) | 0.9 s | 1.3 s |
+| CPU (14 threads) | 1.9 s | 4.9 s |
+
 Inputs: one CC and one MLO image of the **same breast**, as exported full-resolution
 JPEG/PNG/TIFF (or DICOM with `pydicom` installed). Orientation does not matter.
 

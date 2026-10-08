@@ -22,10 +22,12 @@ def main(argv=None):
     ap.add_argument("--bundle", default=DEFAULT_BUNDLE)
     ap.add_argument("--json", help="write the full result as JSON")
     ap.add_argument("--heatmaps", help="directory for Grad-CAM overlays (PNG)")
-    ap.add_argument("--device", default=None)
+    ap.add_argument("--device", default=None, help="cuda / cpu (default: GPU if available)")
+    ap.add_argument("--mode", default="fast", choices=["fast", "accurate"],
+                    help="fast: 2 networks (default); accurate: all 10 fold networks")
     a = ap.parse_args(argv)
 
-    pred = MammoPredictor(a.bundle, device=a.device)
+    pred = MammoPredictor(a.bundle, device=a.device, mode=a.mode)
     r = pred.predict(a.cc, a.mlo, explain=bool(a.heatmaps))
     print(r.summary())
     if a.json:

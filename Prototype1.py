@@ -26,6 +26,24 @@ def install(package):
         print(f"Installing {pip_name}...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", pip_name])
 
+def has_nvidia_gpu():
+    import shutil
+    return shutil.which("nvidia-smi") is not None and subprocess.call(
+        ["nvidia-smi"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0
+
+
+# On machines with an NVIDIA GPU install the CUDA build of PyTorch (the default pip wheel is CPU-only
+# on Windows); the tool then uses the GPU automatically.
+try:
+    import torch
+    need_cuda = has_nvidia_gpu() and not torch.cuda.is_available()
+except ImportError:
+    need_cuda = has_nvidia_gpu()
+if need_cuda:
+    print("NVIDIA GPU found - installing CUDA-enabled PyTorch...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "--force-reinstall", "torch", "torchvision",
+                           "--index-url", "https://download.pytorch.org/whl/cu130"])
+
 for pkg in requirements:
     install(pkg)
 
